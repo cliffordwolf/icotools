@@ -32,24 +32,38 @@
 #define CFG_RST  25 // PIN 37, GPIO.25
 #define CFG_DONE 21 // PIN 29, GPIO.21
 
+__attribute__((always_inline)) inline void barrier_sync();
+__attribute__((always_inline)) inline void waitHalfClk();
+
+void barrier_sync() {
+        asm volatile("" : : : "memory");
+        __sync_synchronize();
+}
+
+void waitHalfClk() { 
+	// The raspberry Pi is too slow to for this to matter anyway, but we
+	// put a single NOP here to ensure CLKs are somewhat even. Each CLK
+	// currently roughly runs with ~1.4MHz on a Raspberry Pi Zero (1 GHz).
+	// 
+	// Most SPI flashe support reads up to 5 MHz. If you get errors on read,
+	// you can try adding more nops here.
+	asm("nop");
+}
+
 void spi_begin()
 {
+	delayMicroseconds(1);
 	digitalWrite(CFG_SS, LOW);
-	// fprintf(stderr, "SPI_BEGIN\n");
+	barrier_sync();
+	delayMicroseconds(1);
 }
 
 void spi_end()
 {
+	delayMicroseconds(1);
 	digitalWrite(CFG_SS, HIGH);
-	// fprintf(stderr, "SPI_END\n");
-}
-
-void uwait_barrier_sync(int n)
-{
-	int k;
-	for (k = 0; k < n; k++)
-		asm volatile("" : : : "memory");
-	__sync_synchronize();
+	barrier_sync();
+	delayMicroseconds(1);
 }
 
 uint32_t spi_xfer(uint32_t data, int nbits)
@@ -59,18 +73,20 @@ uint32_t spi_xfer(uint32_t data, int nbits)
 
 	for (i = nbits-1; i >= 0; i--)
 	{
-		uwait_barrier_sync(10);
-		digitalWrite(CFG_SO, (data & (1 << i)) ? HIGH : LOW);
-
-		uwait_barrier_sync(10);
-		if (digitalRead(CFG_SI) == HIGH)
-			rdata |= 1 << i;
-
-		uwait_barrier_sync(10);
-		digitalWrite(CFG_SCK, HIGH);
-
-		uwait_barrier_sync(10);
 		digitalWrite(CFG_SCK, LOW);
+		barrier_sync();
+
+		// Data is changed while clock is low
+		digitalWrite(CFG_SO, (data & (1 << i)) ? HIGH : LOW);
+		barrier_sync();
+ 		waitHalfClk();
+		
+		// Data is considerd valid while clock is high
+		// We sample the data at the midpoint of the clock cycle
+		digitalWrite(CFG_SCK, HIGH);
+		barrier_sync();
+ 		waitHalfClk();
+   		rdata |= digitalRead(CFG_SI) << i;
 	}
 
 	// fprintf(stderr, "SPI:%d %02x %02x\n", nbits, data, rdata);
@@ -144,7 +160,6 @@ void flash_wait()
 			break;
 
 		// fprintf(stderr, "[wait]");
-		usleep(1000);
 	}
 
 	// fprintf(stderr, "[ok]\n");
@@ -234,6 +249,9 @@ int main(int argc, char **argv)
 	digitalWrite(CFG_SO,  LOW);
 	digitalWrite(CFG_RST, LOW);
 
+	barrier_sync();
+	delayMicroseconds(10);
+
 	if (strcmp(argv[1], ".."))
 	{
 		flash_power_up();
@@ -250,8 +268,7 @@ int main(int argc, char **argv)
 
 		flash_wrsector(0, buffer, sizeof(buffer));
 	}
-	else
-	if (strcmp(argv[1], ".."))
+	else if (strcmp(argv[1], ".."))
 	{
 		int addr = 0, size = 0;
 		char buffer[64*1024];
@@ -273,19 +290,30 @@ int main(int argc, char **argv)
 				size += rc;
 			}
 
-			if (size > 0)
+			if (size > 0) {
 				flash_wrsector(addr, buffer, size);
+			}
 		} while (size == sizeof(buffer));
 	}
 
-	digitalWrite(CFG_RST, LOW);
-	usleep(2000);
-
+	// Release SPI pins so FPGA can take over
+	pinMode(CFG_SS,   INPUT);
+	pinMode(CFG_SCK,  INPUT);
+	pinMode(CFG_SO,   INPUT);
 	digitalWrite(CFG_RST, HIGH);
-	usleep(500000);
+	barrier_sync();
+
+	// Wait for FPGA to start reading the SROM
+	int i;
+	for (i = 0; i < 2000/10; i++) {
+  	  delay(10);
+	  if (digitalRead(CFG_DONE) == HIGH) {
+	    break;
+          }
+        }
 
 	if (digitalRead(CFG_DONE) != HIGH) {
-		printf("Warning: cdone is low\n");
+		printf("WARNING: cdone is low, FPGA did probably not SROM input\n");
 		return 1;
 	}
 

@@ -17,16 +17,27 @@ IceZero Getting Started Guide
 **Step 1:** Get the raspbian image with pre-installed FOSS iCE40 tools:  
 http://files.clifford.at/2017-03-02-raspbian-jessie-icotools.zip
 
-**Step 2:** Unzip the file and write the image on a (min 16 GB) SD card. See this link for instructions:  
+And unzip the file and write the image on a (min 16 GB) SD card. See this link for instructions:  
 https://www.raspberrypi.org/documentation/installation/installing-images/README.md
 
-**Step 3:** Connect your IceZero with your Raspberry Pi or Raspberry Pi Zero and boot
+
+-- or --
+
+Install the icestorm toolchain via:
+
+    sudo apt-get install fpga-icestorm arachne-pnr
+
+**Step 2:** Connect your IceZero with your Raspberry Pi or Raspberry Pi Zero and boot
 the Raspberry Pi from the SD card.
 
-**Step 4:** Copy the files in this directory onto the Raspberry Pi and build the
+**Step 2:** Copy the files in this directory onto the Raspberry Pi and build the
 IceZero programming tool:
 
     make icezprog
+
+and optionally
+
+    sudo make install_icezprog
 
 **Step 5:** Build the example design and program it into the IceZero board:
 
